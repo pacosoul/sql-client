@@ -1,40 +1,38 @@
 
 import { NextResponse } from 'next/server';
-import mysql, { RowDataPacket } from 'mysql2/promise';
+import { getDatabaseAdapter } from '@/lib/db/factory';
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const tableName = searchParams.get('table');
 
-    if (!process.env.DATABASE_URL) {
+    // Get connection details from headers
+    const connectionString = request.headers.get('x-connection-string');
+    const dbType = request.headers.get('x-db-type') as 'mysql' | 'postgres' || 'mysql';
+
+    if (!connectionString && !process.env.DATABASE_URL) {
       return NextResponse.json(
         { error: 'Database connection string not configured' },
         { status: 500 }
       );
     }
 
-    const connection = await mysql.createConnection(process.env.DATABASE_URL);
+    const finalConnectionString = connectionString || process.env.DATABASE_URL!;
+    const db = getDatabaseAdapter(dbType, finalConnectionString);
 
     try {
-      if (tableName) {
-        // Safe parameter interpolation for table name is tricky in some drivers, 
-        // but 'mysql2' doesn't support identifiers in prepared statements well for all cases.
-        // We validatethe table name to strictly alphanumeric/underscore to prevent injection.
-        if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
-          return NextResponse.json({ error: 'Invalid table name' }, { status: 400 });
-        }
+      await db.connect();
 
-        const [rows] = await connection.execute(`SHOW COLUMNS FROM \`${tableName}\``);
-        return NextResponse.json(rows);
+      if (tableName) {
+        const columns = await db.getColumns(tableName);
+        return NextResponse.json(columns);
       } else {
-        const [rows] = await connection.execute('SHOW TABLES');
-        // valid for MySQL, the key depends on db name usually, but Object.values gets the table name safely
-        const tables = (rows as RowDataPacket[]).map(row => Object.values(row)[0]);
+        const tables = await db.getTables();
         return NextResponse.json(tables);
       }
     } finally {
-      await connection.end();
+      await db.disconnect();
     }
 
   } catch (error: any) {

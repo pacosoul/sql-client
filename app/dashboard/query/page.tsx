@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import ConnectionManager, { DatabaseConnection } from '@/components/dashboard/ConnectionManager';
 
 type QueryHistoryItem = {
   id: string;
@@ -40,6 +41,9 @@ export default function QueryPage() {
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
   const [loadingSchema, setLoadingSchema] = useState(false);
 
+  // Connection State
+  const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
+
   useEffect(() => {
     const savedHistory = localStorage.getItem('prophet_query_history');
     const savedFavorites = localStorage.getItem('prophet_query_favorites');
@@ -47,19 +51,41 @@ export default function QueryPage() {
     if (savedFavorites) setFavorites(JSON.parse(savedFavorites));
 
     // Load tables initially
-    fetchTables();
-  }, []);
+    fetchTables(activeConnection);
+  }, []); // Run once on mount
 
-  const fetchTables = async () => {
+  // Reload tables when connection changes
+  useEffect(() => {
+    fetchTables(activeConnection);
+    setSchemaCache({}); // Clear cache on connection switch
+    setExpandedTables(new Set());
+    setResults(null);
+  }, [activeConnection]);
+
+  const getHeaders = (conn: DatabaseConnection | null) => {
+    const headers: HeadersInit = {};
+    if (conn) {
+      headers['x-connection-string'] = conn.connectionString;
+      headers['x-db-type'] = conn.type;
+    }
+    return headers;
+  };
+
+  const fetchTables = async (conn: DatabaseConnection | null) => {
     setLoadingSchema(true);
     try {
-      const res = await fetch('/api/schema');
+      const res = await fetch('/api/schema', {
+        headers: getHeaders(conn)
+      });
       if (res.ok) {
         const data = await res.json();
         setTables(data);
+      } else {
+        setTables([]);
       }
     } catch (e) {
       console.error("Failed to load tables", e);
+      setTables([]);
     } finally {
       setLoadingSchema(false);
     }
@@ -74,7 +100,9 @@ export default function QueryPage() {
       if (!schemaCache[tableName]) {
         // Fetch columns if not cached
         try {
-          const res = await fetch(`/api/schema?table=${tableName}`);
+          const res = await fetch(`/api/schema?table=${tableName}`, {
+            headers: getHeaders(activeConnection)
+          });
           if (res.ok) {
             const columns = await res.json();
             setSchemaCache(prev => ({ ...prev, [tableName]: columns }));
@@ -140,6 +168,7 @@ export default function QueryPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getHeaders(activeConnection)
         },
         body: JSON.stringify({ query }),
       });
@@ -259,6 +288,12 @@ export default function QueryPage() {
 
         {/* Right Column: History & Favorites */}
         <div className="w-80 bg-white border border-gray-200 rounded-lg flex flex-col overflow-hidden shrink-0">
+          <div className="p-4 bg-gray-50 border-b border-gray-200">
+            <ConnectionManager
+              activeConnectionId={activeConnection?.id || null}
+              onConnectionChange={setActiveConnection}
+            />
+          </div>
           <div className="flex border-b border-gray-200">
             <button
               onClick={() => setActiveTab('history')}

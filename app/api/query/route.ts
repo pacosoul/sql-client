@@ -1,43 +1,31 @@
 
 import { NextResponse } from 'next/server';
-import mysql, { FieldPacket } from 'mysql2/promise';
+import { getDatabaseAdapter } from '@/lib/db/factory';
 
 export async function POST(request: Request) {
   try {
     const { query } = await request.json();
 
-    if (!process.env.DATABASE_URL) {
+    // Get connection details from headers
+    const connectionString = request.headers.get('x-connection-string');
+    const dbType = request.headers.get('x-db-type') as 'mysql' | 'postgres' || 'mysql';
+
+    if (!connectionString && !process.env.DATABASE_URL) {
       return NextResponse.json(
         { error: 'Database connection string not configured' },
         { status: 500 }
       );
     }
 
-    const connection = await mysql.createConnection(process.env.DATABASE_URL);
+    const finalConnectionString = connectionString || process.env.DATABASE_URL!;
+    const db = getDatabaseAdapter(dbType, finalConnectionString);
 
     try {
-      const [rows, fields] = await connection.execute(query);
-
-      // Extract column names from metadata
-      // fields is undefined for queries that don't return partials (like INSERT/UPDATE sometimes depending on driver version, but for SELECT it exists)
-      // For mysql2 execute, fields is present for SELECT
-      const columns = fields ? fields.map((field: FieldPacket) => field.name) : [];
-
-      // If no columns (e.g. INSERT), maybe return affectedRows? 
-      // For now, let's assume SELECT for visualization or just return empty columns.
-      // If rows is not an array (e.g. ResultSetHeader for INSERT), we handle it.
-      let resultRows: any = rows;
-      let resultColumns = columns;
-
-      if (!Array.isArray(rows)) {
-        // It's a ResultSetHeader (INSERT, UPDATE, DELETE)
-        resultColumns = ['Message'];
-        resultRows = [{ Message: `Success. Affected Rows: ${(rows as any).affectedRows}` }];
-      }
-
-      return NextResponse.json({ columns: resultColumns, rows: resultRows });
+      await db.connect();
+      const result = await db.query(query);
+      return NextResponse.json(result);
     } finally {
-      await connection.end();
+      await db.disconnect();
     }
 
   } catch (error: any) {
