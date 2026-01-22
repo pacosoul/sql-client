@@ -29,7 +29,7 @@ export class MySqlAdapter implements DatabaseAdapter {
     // @ts-ignore - connection is guaranteed by connect()
     const [rows, fields] = await this.connection.execute(sql);
 
-    let resultRows = rows;
+    let resultRows: any = rows;
     let resultColumns: string[] = [];
 
     if (Array.isArray(rows)) {
